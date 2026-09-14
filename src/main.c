@@ -6,7 +6,6 @@
 
 #define SAMPLE_INTERVAL_MS 5000
 
-// test
 int main(void)
 {
     const struct device *bme688 =
@@ -33,6 +32,7 @@ int main(void)
         struct sensor_value temperature;
         struct sensor_value humidity;
         struct sensor_value pressure;
+        struct sensor_value gas_resistance;
 
         sensor_channel_get(
             bme688,
@@ -52,23 +52,42 @@ int main(void)
             &pressure
         );
 
+        int gas_ret = sensor_channel_get(
+            bme688,
+            SENSOR_CHAN_GAS_RES,
+            &gas_resistance
+        );
+
         printf(
-            "Temperature: %d.%06d °C\n",
+            "Temperature:    %d.%06d °C\n",
             temperature.val1,
             temperature.val2
         );
 
         printf(
-            "Humidity:    %d.%06d %%\n",
+            "Humidity:       %d.%06d %%\n",
             humidity.val1,
             humidity.val2
         );
 
         printf(
-            "Pressure:    %d.%06d kPa\n",
+            "Pressure:       %d.%06d kPa\n",
             pressure.val1,
             pressure.val2
         );
+
+        if (gas_ret == 0) {
+            printf(
+                "Gas resistance: %d.%06d ohms\n",
+                gas_resistance.val1,
+                gas_resistance.val2
+            );
+        } else {
+            printf(
+                "Gas resistance: unavailable (error %d)\n",
+                gas_ret
+            );
+        }
 
         printf("-----------------------------\n");
 
