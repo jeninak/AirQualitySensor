@@ -6,6 +6,7 @@
 
 #define SAMPLE_INTERVAL_MS 5000
 
+// test
 int main(void)
 {
     const struct device *bme688 =
