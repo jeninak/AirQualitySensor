@@ -1,10 +1,8 @@
 #include <stdio.h>
-
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/sensor.h>
-
-#define SAMPLE_INTERVAL_MS 5000
+#include <drivers/bme68x_iaq.h>
 
 int main(void)
 {
@@ -16,23 +14,25 @@ int main(void)
         return 0;
     }
 
-    printf("Thingy:53 Home Environment Monitor\n");
-    printf("BME688 initialized successfully.\n\n");
+    printf("\n");
+    printf("Thingy:53 BME688 BSEC2 test\n");
+    printf("Sensor initialized successfully.\n\n");
 
     while (1) {
-
         int ret = sensor_sample_fetch(bme688);
 
         if (ret < 0) {
-            printf("Failed to fetch sensor data: %d\n", ret);
-            k_sleep(K_MSEC(SAMPLE_INTERVAL_MS));
+            printf("Sensor fetch failed: %d\n", ret);
+            k_sleep(K_SECONDS(5));
             continue;
         }
 
         struct sensor_value temperature;
         struct sensor_value humidity;
         struct sensor_value pressure;
-        struct sensor_value gas_resistance;
+        struct sensor_value iaq;
+        struct sensor_value co2;
+        struct sensor_value voc;
 
         sensor_channel_get(
             bme688,
@@ -52,46 +52,45 @@ int main(void)
             &pressure
         );
 
-        int gas_ret = sensor_channel_get(
+        sensor_channel_get(
             bme688,
-            SENSOR_CHAN_GAS_RES,
-            &gas_resistance
+            SENSOR_CHAN_IAQ,
+            &iaq
         );
 
-        printf(
-            "Temperature:    %d.%06d °C\n",
-            temperature.val1,
-            temperature.val2
+        sensor_channel_get(
+            bme688,
+            SENSOR_CHAN_CO2,
+            &co2
         );
 
-        printf(
-            "Humidity:       %d.%06d %%\n",
-            humidity.val1,
-            humidity.val2
+        sensor_channel_get(
+            bme688,
+            SENSOR_CHAN_VOC,
+            &voc
         );
 
-        printf(
-            "Pressure:       %d.%06d kPa\n",
-            pressure.val1,
-            pressure.val2
-        );
+        printf("Temperature: %d.%06d C\n",
+               temperature.val1, temperature.val2);
 
-        if (gas_ret == 0) {
-            printf(
-                "Gas resistance: %d.%06d ohms\n",
-                gas_resistance.val1,
-                gas_resistance.val2
-            );
-        } else {
-            printf(
-                "Gas resistance: unavailable (error %d)\n",
-                gas_ret
-            );
-        }
+        printf("Humidity:    %d.%06d %%\n",
+               humidity.val1, humidity.val2);
+
+        printf("Pressure:    %d.%06d kPa\n",
+               pressure.val1, pressure.val2);
+
+        printf("IAQ:         %d.%06d\n",
+               iaq.val1, iaq.val2);
+
+        printf("CO2 eq:      %d.%06d ppm\n",
+               co2.val1, co2.val2);
+
+        printf("VOC eq:      %d.%06d ppm\n",
+               voc.val1, voc.val2);
 
         printf("-----------------------------\n");
 
-        k_sleep(K_MSEC(SAMPLE_INTERVAL_MS));
+        k_sleep(K_SECONDS(5));
     }
 
     return 0;
