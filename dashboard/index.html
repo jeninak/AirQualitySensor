@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Nordic Thingy:53 home environment monitoring dashboard">
+    <title>Home Environment Monitor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app">
+        <header class="topbar">
+            <div>
+                <p class="eyebrow">NORDIC THINGY:53</p>
+                <h1>Home Environment</h1>
+                <p class="subtitle">BME688 air-quality monitoring</p>
+            </div>
+
+            <div class="device-status">
+                <span class="status-dot" id="statusDot"></span>
+                <div>
+                    <strong id="deviceStatus">Online</strong>
+                    <span id="lastUpdate">Last update: --:--:--</span>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <section class="section">
+                <div class="section-heading">
+                    <div>
+                        <h2>Current measurements</h2>
+                        <p>Latest values reported by the sensor</p>
+                    </div>
+                </div>
+
+                <div class="measurement-grid">
+                    <article class="card measurement-card">
+                        <div class="card-icon temperature-icon">°C</div>
+                        <div class="card-label">Temperature</div>
+                        <div class="value" id="temperature">--</div>
+                        <div class="unit">°C</div>
+                    </article>
+
+                    <article class="card measurement-card">
+                        <div class="card-icon humidity-icon">%</div>
+                        <div class="card-label">Humidity</div>
+                        <div class="value" id="humidity">--</div>
+                        <div class="unit">%</div>
+                    </article>
+
+                    <article class="card measurement-card">
+                        <div class="card-icon pressure-icon">P</div>
+                        <div class="card-label">Pressure</div>
+                        <div class="value" id="pressure">--</div>
+                        <div class="unit">hPa</div>
+                    </article>
+
+                    <article class="card measurement-card">
+                        <div class="card-icon iaq-icon">IAQ</div>
+                        <div class="card-label">Indoor Air Quality</div>
+                        <div class="value" id="iaq">--</div>
+                        <div class="unit" id="iaqLabel">Waiting for data</div>
+                    </article>
+
+                    <article class="card measurement-card">
+                        <div class="card-icon accuracy-icon">A</div>
+                        <div class="card-label">IAQ Accuracy</div>
+                        <div class="value" id="iaqAccuracy">--</div>
+                        <div class="unit" id="accuracyLabel">BSEC status</div>
+                    </article>
+
+                    <article class="card measurement-card">
+                        <div class="card-icon co2-icon">CO₂</div>
+                        <div class="card-label">CO₂ Equivalent</div>
+                        <div class="value" id="co2">--</div>
+                        <div class="unit">ppm</div>
+                    </article>
+
+                    <article class="card measurement-card">
+                        <div class="card-icon voc-icon">VOC</div>
+                        <div class="card-label">VOC Equivalent</div>
+                        <div class="value" id="voc">--</div>
+                        <div class="unit">ppm</div>
+                    </article>
+
+                    <article class="card measurement-card">
+                        <div class="card-icon gas-icon">G</div>
+                        <div class="card-label">Gas Stability</div>
+                        <div class="value status-value" id="gasStability">--</div>
+                        <div class="unit" id="gasLabel">BME688</div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="section">
+                <div class="section-heading">
+                    <div>
+                        <h2>Environment history</h2>
+                        <p>Live preview using simulated sensor data</p>
+                    </div>
+                    <span class="demo-badge">DEMO DATA</span>
+                </div>
+
+                <div class="charts-grid">
+                    <article class="card chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <h3>Temperature</h3>
+                                <span>°C</span>
+                            </div>
+                            <strong id="temperatureChartValue">--</strong>
+                        </div>
+                        <div class="chart-wrap">
+                            <canvas id="temperatureChart"></canvas>
+                        </div>
+                    </article>
+
+                    <article class="card chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <h3>Humidity</h3>
+                                <span>%</span>
+                            </div>
+                            <strong id="humidityChartValue">--</strong>
+                        </div>
+                        <div class="chart-wrap">
+                            <canvas id="humidityChart"></canvas>
+                        </div>
+                    </article>
+
+                    <article class="card chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <h3>Indoor Air Quality</h3>
+                                <span>IAQ</span>
+                            </div>
+                            <strong id="iaqChartValue">--</strong>
+                        </div>
+                        <div class="chart-wrap">
+                            <canvas id="iaqChart"></canvas>
+                        </div>
+                    </article>
+
+                    <article class="card chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <h3>CO₂ Equivalent</h3>
+                                <span>ppm</span>
+                            </div>
+                            <strong id="co2ChartValue">--</strong>
+                        </div>
+                        <div class="chart-wrap">
+                            <canvas id="co2Chart"></canvas>
+                        </div>
+                    </article>
+
+                    <article class="card chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <h3>VOC Equivalent</h3>
+                                <span>ppm</span>
+                            </div>
+                            <strong id="vocChartValue">--</strong>
+                        </div>
+                        <div class="chart-wrap">
+                            <canvas id="vocChart"></canvas>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="section">
+                <div class="section-heading">
+                    <div>
+                        <h2>Device status</h2>
+                        <p>Thingy:53 and BSEC information</p>
+                    </div>
+                </div>
+
+                <div class="status-grid">
+                    <article class="card status-card">
+                        <span class="status-title">Thingy:53 connection</span>
+                        <strong id="connectionText">Connected</strong>
+                        <span class="status-description" id="connectionDescription">
+                            Receiving sensor measurements
+                        </span>
+                    </article>
+
+                    <article class="card status-card">
+                        <span class="status-title">BSEC calibration</span>
+                        <strong id="bsecStatus">Initial calibration</strong>
+                        <span class="status-description" id="bsecDescription">
+                            IAQ accuracy: 0
+                        </span>
+                    </article>
+
+                    <article class="card status-card">
+                        <span class="status-title">Gas sensor</span>
+                        <strong id="gasStatus">Stable</strong>
+                        <span class="status-description">
+                            BME688 gas stability status
+                        </span>
+                    </article>
+
+                    <article class="card status-card">
+                        <span class="status-title">Sampling interval</span>
+                        <strong>5 seconds</strong>
+                        <span class="status-description">
+                            Current firmware interval
+                        </span>
+                    </article>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <span>AirQualitySensor</span>
+            <span>Nordic Thingy:53 · BME688</span>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
