@@ -1,0 +1,11 @@
+{
+    "temperature": 22.07,
+    "humidity": 47.46,
+    "pressure": 1026.23,
+    "iaq": 104,
+    "iaq_accuracy": 3,
+    "co2": 1028.8,
+    "voc": 1.66,
+    "gas_stability": 1,
+    "timestamp": 1759150000
+}

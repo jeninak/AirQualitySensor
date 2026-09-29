@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <errno.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -37,24 +38,37 @@ static void wifi_event_handler(struct net_mgmt_event_callback *cb,
 
 static int wifi_connect(void)
 {
-    struct net_if *iface = net_if_get_default();
+    struct net_if *iface = net_if_get_first_wifi();
+
+    if (iface == NULL) {
+        printf("ERROR: No Wi-Fi interface found.\n");
+        return -ENODEV;
+    }
 
     struct wifi_connect_req_params params = {
-        .ssid = WIFI_SSID,
+        .ssid = (const uint8_t *)WIFI_SSID,
         .ssid_length = strlen(WIFI_SSID),
-        .psk = WIFI_PASSWORD,
+
+        .psk = (const uint8_t *)WIFI_PASSWORD,
         .psk_length = strlen(WIFI_PASSWORD),
+
         .security = WIFI_SECURITY_TYPE_PSK,
+        .mfp = WIFI_MFP_OPTIONAL,
+
         .channel = WIFI_CHANNEL_ANY,
+        .band = WIFI_FREQ_BAND_UNKNOWN,
+
         .timeout = SYS_FOREVER_MS,
     };
 
     printf("\nConnecting to Wi-Fi...\n");
 
-    int ret = net_mgmt(NET_REQUEST_WIFI_CONNECT,
-                       iface,
-                       &params,
-                       sizeof(params));
+    int ret = net_mgmt(
+        NET_REQUEST_WIFI_CONNECT,
+        iface,
+        &params,
+        sizeof(params)
+    );
 
     if (ret != 0) {
         printf("Wi-Fi connection request failed: %d\n", ret);
@@ -80,6 +94,9 @@ int main(void)
     );
 
     net_mgmt_add_event_callback(&wifi_cb);
+
+    printf("\nWaiting for Wi-Fi interface...\n");
+    k_sleep(K_SECONDS(2));
 
     // Start Wi-Fi
     int wifi_ret = wifi_connect();
