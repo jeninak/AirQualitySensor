@@ -1,0 +1,8 @@
+#ifndef WIFI_CONFIG_H
+#define WIFI_CONFIG_H
+
+/* Copy this file to wifi_config.h and set credentials for a 2.4 GHz WPA/WPA2 network. */
+#define WIFI_SSID ""
+#define WIFI_PASSWORD ""
+
+#endif
