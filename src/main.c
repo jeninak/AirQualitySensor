@@ -22,9 +22,11 @@
 
 #define SAMPLE_INTERVAL_MS 5000
 #define WIFI_TIMEOUT_SECONDS 30
+#define WIFI_REQUEST_TIMEOUT_SECONDS 15
 #define DHCP_TIMEOUT_SECONDS 15
 #define WIFI_CONNECT_ATTEMPTS 3
 #define WIFI_RETRY_DELAY_SECONDS 2
+#define WIFI_FAILURE_PATTERN_CYCLES 3
 
 #define TELEMETRY_HOST "www.cc.puv.fi"
 #define TELEMETRY_PORT "443"
@@ -54,6 +56,31 @@ static volatile int wifi_connect_status = -1;
 
 static volatile bool http_response_received = false;
 static volatile uint16_t http_status_code = 0;
+static uint8_t telemetry_failure_code;
+
+struct saved_wifi_network {
+    char ssid[WIFI_SSID_MAX_LEN];
+    size_t ssid_len;
+    bool found;
+};
+
+struct wifi_connect_job {
+    struct net_if *iface;
+    struct wifi_connect_req_params params;
+    struct wifi_credentials_personal credentials;
+    int result;
+};
+
+static struct wifi_connect_job wifi_job;
+static struct k_sem wifi_request_sem;
+static struct k_sem wifi_request_done_sem;
+static struct k_thread wifi_request_thread;
+static K_THREAD_STACK_DEFINE(
+    wifi_request_stack,
+    4096
+);
+static bool wifi_request_worker_started = false;
+static bool wifi_request_in_progress = false;
 
 // Turn off all RGB channels
 static void led_all_off(void)
@@ -77,6 +104,20 @@ static void led_error(void)
     led_on_dt(&led_red);
 }
 
+static void led_failure_code(uint8_t code)
+{
+    for (int cycle = 0; cycle < WIFI_FAILURE_PATTERN_CYCLES; cycle++) {
+        for (uint8_t pulse = 0; pulse < code; pulse++) {
+            led_on_dt(&led_red);
+            k_msleep(250);
+            led_all_off();
+            k_msleep(250);
+        }
+
+        k_sleep(K_MSEC(1000));
+    }
+}
+
 // Yellow = Wi-Fi connected, waiting for DHCP
 static void led_waiting_network(void)
 {
@@ -85,12 +126,35 @@ static void led_waiting_network(void)
     led_on_dt(&led_green);
 }
 
-// Purple = network ready, HTTPS telemetry in progress
-static void led_sending(void)
+// Cyan = DHCP completed and the network is ready
+static void led_network_ready(void)
+{
+    led_all_off();
+    led_on_dt(&led_green);
+    led_on_dt(&led_blue);
+}
+
+// Blue = resolving the telemetry server hostname
+static void led_dns_lookup(void)
+{
+    led_all_off();
+    led_on_dt(&led_blue);
+}
+
+// Purple = connecting to the HTTPS server and completing TLS
+static void led_https_connecting(void)
 {
     led_all_off();
     led_on_dt(&led_red);
     led_on_dt(&led_blue);
+}
+
+// Yellow = sending the HTTPS request and awaiting its response
+static void led_http_posting(void)
+{
+    led_all_off();
+    led_on_dt(&led_red);
+    led_on_dt(&led_green);
 }
 
 // Green = telemetry successfully accepted by server
@@ -185,7 +249,7 @@ static void net_event_handler(struct net_mgmt_event_callback *cb,
             "DHCP completed successfully.\n"
         );
 
-        led_sending();
+        led_network_ready();
     }
 }
 
@@ -236,6 +300,38 @@ static int wifi_store_credentials(void)
         WIFI_TIMEOUT_SECONDS
     );
 
+    if (ret == -ENOBUFS) {
+        printf(
+            "Wi-Fi credential store is full; replacing saved networks with the firmware-configured network.\n"
+        );
+
+        ret = wifi_credentials_delete_all();
+
+        if (ret != 0) {
+            printf(
+                "ERROR: Failed to clear saved Wi-Fi credentials: %d\n",
+                ret
+            );
+
+            led_error();
+
+            return ret;
+        }
+
+        ret = wifi_credentials_set_personal(
+            WIFI_SSID,
+            strlen(WIFI_SSID),
+            WIFI_SECURITY_TYPE_PSK,
+            NULL,
+            0,
+            WIFI_PASSWORD,
+            strlen(WIFI_PASSWORD),
+            0,
+            WIFI_CHANNEL_ANY,
+            WIFI_TIMEOUT_SECONDS
+        );
+    }
+
     if (ret != 0) {
         printf(
             "ERROR: Failed to store Wi-Fi credentials: %d\n",
@@ -254,7 +350,68 @@ static int wifi_store_credentials(void)
     return 0;
 }
 
-// Connect to the stored Wi-Fi network
+static void get_first_saved_wifi_ssid(void *user_data,
+                                      const char *ssid,
+                                      size_t ssid_len)
+{
+    struct saved_wifi_network *network = user_data;
+
+    if (network->found || ssid_len == 0 ||
+        ssid_len > sizeof(network->ssid)) {
+        return;
+    }
+
+    memcpy(network->ssid, ssid, ssid_len);
+    network->ssid_len = ssid_len;
+    network->found = true;
+}
+
+static void wifi_request_worker(void *arg1, void *arg2, void *arg3)
+{
+    ARG_UNUSED(arg1);
+    ARG_UNUSED(arg2);
+    ARG_UNUSED(arg3);
+
+    while (true) {
+        k_sem_take(&wifi_request_sem, K_FOREVER);
+
+        wifi_job.result = net_mgmt(
+            NET_REQUEST_WIFI_CONNECT,
+            wifi_job.iface,
+            &wifi_job.params,
+            sizeof(wifi_job.params)
+        );
+
+        k_sem_give(&wifi_request_done_sem);
+    }
+}
+
+static void wifi_request_worker_start(void)
+{
+    if (wifi_request_worker_started) {
+        return;
+    }
+
+    k_sem_init(&wifi_request_sem, 0, 1);
+    k_sem_init(&wifi_request_done_sem, 0, 1);
+
+    k_thread_create(
+        &wifi_request_thread,
+        wifi_request_stack,
+        K_THREAD_STACK_SIZEOF(wifi_request_stack),
+        wifi_request_worker,
+        NULL,
+        NULL,
+        NULL,
+        K_PRIO_PREEMPT(5),
+        0,
+        K_NO_WAIT
+    );
+
+    wifi_request_worker_started = true;
+}
+
+// Connect directly with the saved credentials.
 static int wifi_connect(void)
 {
     struct net_if *iface = net_if_get_first_wifi();
@@ -269,6 +426,105 @@ static int wifi_connect(void)
         return -ENODEV;
     }
 
+    wifi_request_worker_start();
+
+    if (wifi_request_in_progress) {
+        if (k_sem_take(&wifi_request_done_sem, K_NO_WAIT) == 0) {
+            wifi_request_in_progress = false;
+        } else {
+            printf(
+                "ERROR: Previous Wi-Fi driver request is still running.\n"
+            );
+
+            led_error();
+
+            return -EBUSY;
+        }
+    }
+
+    if (wifi_connected) {
+        return 0;
+    }
+
+    struct saved_wifi_network network = {0};
+
+    if (WIFI_SSID[0] != '\0') {
+        network.ssid_len = strlen(WIFI_SSID);
+
+        if (network.ssid_len > sizeof(network.ssid)) {
+            printf("ERROR: Configured Wi-Fi SSID is too long.\n");
+            led_error();
+            return -EINVAL;
+        }
+
+        memcpy(network.ssid, WIFI_SSID, network.ssid_len);
+        network.found = true;
+    } else {
+        wifi_credentials_for_each_ssid(
+            get_first_saved_wifi_ssid,
+            &network
+        );
+    }
+
+    if (!network.found) {
+        printf("ERROR: No saved Wi-Fi network is available to connect to.\n");
+        led_error();
+        return -ENOENT;
+    }
+
+    memset(&wifi_job.credentials, 0, sizeof(wifi_job.credentials));
+    int ret = wifi_credentials_get_by_ssid_personal_struct(
+        network.ssid,
+        network.ssid_len,
+        &wifi_job.credentials
+    );
+
+    if (ret != 0) {
+        printf("ERROR: Could not load saved Wi-Fi credentials: %d\n", ret);
+        led_error();
+        return ret;
+    }
+
+    struct wifi_connect_req_params params = {
+        .ssid = (const uint8_t *)wifi_job.credentials.header.ssid,
+        .ssid_length = wifi_job.credentials.header.ssid_len,
+        .psk = (const uint8_t *)wifi_job.credentials.password,
+        .psk_length = wifi_job.credentials.password_len,
+        .channel = wifi_job.credentials.header.channel,
+        .security = wifi_job.credentials.header.type,
+        .mfp = WIFI_MFP_OPTIONAL,
+        .timeout = wifi_job.credentials.header.timeout != 0
+                       ? wifi_job.credentials.header.timeout
+                       : WIFI_TIMEOUT_SECONDS,
+    };
+
+    if (wifi_job.credentials.header.flags & WIFI_CREDENTIALS_FLAG_2_4GHz) {
+        params.band = WIFI_FREQ_BAND_2_4_GHZ;
+    } else if (wifi_job.credentials.header.flags & WIFI_CREDENTIALS_FLAG_5GHz) {
+        params.band = WIFI_FREQ_BAND_5_GHZ;
+    } else if (wifi_job.credentials.header.flags & WIFI_CREDENTIALS_FLAG_6GHz) {
+        params.band = WIFI_FREQ_BAND_6_GHZ;
+    } else {
+        params.band = WIFI_FREQ_BAND_UNKNOWN;
+    }
+
+    if (wifi_job.credentials.header.flags & WIFI_CREDENTIALS_FLAG_MFP_DISABLED) {
+        params.mfp = WIFI_MFP_DISABLE;
+    } else if (wifi_job.credentials.header.flags & WIFI_CREDENTIALS_FLAG_MFP_REQUIRED) {
+        params.mfp = WIFI_MFP_REQUIRED;
+    }
+
+    if (params.security == WIFI_SECURITY_TYPE_SAE) {
+        params.sae_password =
+            (const uint8_t *)wifi_job.credentials.password;
+        params.sae_password_length =
+            wifi_job.credentials.password_len;
+        params.psk = NULL;
+        params.psk_length = 0;
+    }
+
+    wifi_job.iface = iface;
+    wifi_job.params = params;
     wifi_connected = false;
     wifi_connect_result_received = false;
     wifi_connect_status = -1;
@@ -277,20 +533,47 @@ static int wifi_connect(void)
     led_wifi_connecting();
 
     printf(
-        "Connecting to stored Wi-Fi network...\n"
+        "Connecting to saved Wi-Fi network...\n"
     );
 
-    int ret = net_mgmt(
-        NET_REQUEST_WIFI_CONNECT_STORED,
-        iface,
-        NULL,
-        0
-    );
+    wifi_request_in_progress = true;
+    k_sem_reset(&wifi_request_done_sem);
+    k_sem_give(&wifi_request_sem);
 
-    printf(
-        "Wi-Fi connection request returned: %d\n",
-        ret
-    );
+    bool blue_on = true;
+
+    for (int tick = 0;
+         tick < WIFI_REQUEST_TIMEOUT_SECONDS * 4;
+         tick++) {
+        if (k_sem_take(&wifi_request_done_sem, K_MSEC(250)) == 0) {
+            wifi_request_in_progress = false;
+            ret = wifi_job.result;
+
+            printf(
+                "Wi-Fi connection request returned: %d\n",
+                ret
+            );
+
+            break;
+        }
+
+        if (blue_on) {
+            led_on_dt(&led_blue);
+        } else {
+            led_all_off();
+        }
+
+        blue_on = !blue_on;
+    }
+
+    if (wifi_request_in_progress) {
+        printf(
+            "ERROR: Wi-Fi driver request did not return within %d seconds.\n",
+            WIFI_REQUEST_TIMEOUT_SECONDS
+        );
+
+        return -EBUSY;
+    }
 
     if (ret != 0 && ret != -EALREADY) {
         printf(
@@ -322,11 +605,9 @@ static int wait_for_wifi_connection(void)
     );
 
     bool blue_on = true;
+    int wait_ticks = WIFI_TIMEOUT_SECONDS * 4;
 
-    for (int seconds = 0;
-         seconds < WIFI_TIMEOUT_SECONDS;
-         seconds++) {
-
+    for (int tick = 0; tick < wait_ticks; tick++) {
         if (wifi_connect_result_received) {
             break;
         }
@@ -339,7 +620,7 @@ static int wait_for_wifi_connection(void)
 
         blue_on = !blue_on;
 
-        k_sleep(K_SECONDS(1));
+        k_msleep(250);
     }
 
     if (!wifi_connect_result_received) {
@@ -373,6 +654,28 @@ static int wait_for_wifi_connection(void)
     return 0;
 }
 
+static uint8_t wifi_failure_code(int error)
+{
+    if (error == -ETIMEDOUT) {
+        return 3;
+    }
+
+    if (!wifi_connect_result_received) {
+        return 4;
+    }
+
+    switch (wifi_connect_status) {
+    case WIFI_STATUS_CONN_AP_NOT_FOUND:
+        return 1;
+    case WIFI_STATUS_CONN_WRONG_PASSWORD:
+        return 2;
+    case WIFI_STATUS_CONN_TIMEOUT:
+        return 3;
+    default:
+        return 4;
+    }
+}
+
 // Wait for DHCP to provide network connectivity
 static int wait_for_dhcp(void)
 {
@@ -391,7 +694,7 @@ static int wait_for_dhcp(void)
                 "Network is ready.\n"
             );
 
-            led_sending();
+            led_network_ready();
 
             return 0;
         }
@@ -487,7 +790,7 @@ static int send_telemetry(
             "ERROR: Telemetry payload too large.\n"
         );
 
-        led_error();
+        telemetry_failure_code = 8;
 
         return -ENOMEM;
     }
@@ -496,7 +799,9 @@ static int send_telemetry(
         "Sending telemetry...\n"
     );
 
-    led_sending();
+    telemetry_failure_code = 0;
+    led_dns_lookup();
+    printf("Resolving telemetry server hostname...\n");
 
     // Resolve the server hostname
     struct zsock_addrinfo hints = {
@@ -520,7 +825,7 @@ static int send_telemetry(
             ret
         );
 
-        led_error();
+        telemetry_failure_code = 6;
 
         return -EHOSTUNREACH;
     }
@@ -546,7 +851,7 @@ static int send_telemetry(
 
         zsock_freeaddrinfo(res);
 
-        led_error();
+        telemetry_failure_code = 7;
 
         return -err;
     }
@@ -577,7 +882,7 @@ static int send_telemetry(
         zsock_close(sock);
         zsock_freeaddrinfo(res);
 
-        led_error();
+        telemetry_failure_code = 7;
 
         return -err;
     }
@@ -602,7 +907,7 @@ static int send_telemetry(
         zsock_close(sock);
         zsock_freeaddrinfo(res);
 
-        led_error();
+        telemetry_failure_code = 7;
 
         return -err;
     }
@@ -611,6 +916,8 @@ static int send_telemetry(
     printf(
         "Connecting to HTTPS server...\n"
     );
+
+    led_https_connecting();
 
     ret = zsock_connect(
         sock,
@@ -630,7 +937,7 @@ static int send_telemetry(
 
         zsock_close(sock);
 
-        led_error();
+        telemetry_failure_code = 7;
 
         return -err;
     }
@@ -669,6 +976,8 @@ static int send_telemetry(
         "Sending HTTPS POST request...\n"
     );
 
+    led_http_posting();
+
     ret = http_client_req(
         sock,
         &request,
@@ -684,7 +993,7 @@ static int send_telemetry(
 
         zsock_close(sock);
 
-        led_error();
+        telemetry_failure_code = 8;
 
         return ret;
     }
@@ -702,7 +1011,7 @@ static int send_telemetry(
             "ERROR: No final HTTP response received.\n"
         );
 
-        led_error();
+        telemetry_failure_code = 8;
 
         return -EIO;
     }
@@ -713,7 +1022,7 @@ static int send_telemetry(
             http_status_code
         );
 
-        led_error();
+        telemetry_failure_code = 8;
 
         return -EIO;
     }
@@ -792,6 +1101,7 @@ int main(void)
 
     while (true) {
         setup_attempt++;
+        uint8_t failure_code = 4;
 
         printf(
             "\nWi-Fi setup attempt %d (retry group %d/%d)\n",
@@ -804,10 +1114,18 @@ int main(void)
 
         if (network_ret == 0) {
             network_ret = wait_for_wifi_connection();
+
+            if (network_ret != 0) {
+                failure_code = wifi_failure_code(network_ret);
+            }
         }
 
         if (network_ret == 0) {
             network_ret = wait_for_dhcp();
+
+            if (network_ret != 0) {
+                failure_code = 5;
+            }
         }
 
         if (network_ret == 0) {
@@ -839,7 +1157,12 @@ int main(void)
             }
         }
 
-        led_error();
+        printf(
+            "Wi-Fi failure LED code: %u red pulses.\n",
+            failure_code
+        );
+
+        led_failure_code(failure_code);
         k_sleep(K_SECONDS(WIFI_RETRY_DELAY_SECONDS));
     }
 
@@ -1245,7 +1568,11 @@ int main(void)
                 send_ret
             );
 
-            led_error();
+            if (telemetry_failure_code > 0) {
+                led_failure_code(telemetry_failure_code);
+            } else {
+                led_error();
+            }
         } else {
             printf(
                 "Telemetry transmission completed.\n"
