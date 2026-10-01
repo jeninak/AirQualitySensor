@@ -13,6 +13,7 @@
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/net/wifi_credentials.h>
+#include <zephyr/net/dns_resolve.h>
 #include <zephyr/net/socket.h>
 #include <zephyr/net/http/client.h>
 
@@ -30,6 +31,7 @@
 
 #define TELEMETRY_HOST "www.cc.puv.fi"
 #define TELEMETRY_PORT "443"
+#define TELEMETRY_PORT_NUMBER 443
 #define TELEMETRY_PATH "/~e2301774/Dashboard/telemetry.php"
 
 // Thingy:53 LD1 RGB LED
@@ -57,6 +59,46 @@ static volatile int wifi_connect_status = -1;
 static volatile bool http_response_received = false;
 static volatile uint16_t http_status_code = 0;
 static uint8_t telemetry_failure_code;
+
+K_SEM_DEFINE(telemetry_dns_sem, 0, 1);
+static struct net_sockaddr telemetry_server_addr;
+static net_socklen_t telemetry_server_addr_len;
+static uint16_t telemetry_dns_query_id;
+static bool telemetry_dns_address_found;
+static int telemetry_dns_result;
+
+static void telemetry_dns_callback(
+    enum dns_resolve_status status,
+    struct dns_addrinfo *info,
+    void *user_data)
+{
+    ARG_UNUSED(user_data);
+
+    if (status == DNS_EAI_INPROGRESS) {
+        if (info != NULL &&
+            info->ai_family == NET_AF_INET &&
+            info->ai_addrlen > 0 &&
+            info->ai_addrlen <= sizeof(telemetry_server_addr)) {
+            memcpy(
+                &telemetry_server_addr,
+                &info->ai_addr,
+                info->ai_addrlen
+            );
+            telemetry_server_addr_len = info->ai_addrlen;
+            telemetry_dns_address_found = true;
+        }
+
+        return;
+    }
+
+    if (status == DNS_EAI_ALLDONE && telemetry_dns_address_found) {
+        telemetry_dns_result = 0;
+    } else {
+        telemetry_dns_result = -EHOSTUNREACH;
+    }
+
+    k_sem_give(&telemetry_dns_sem);
+}
 
 struct saved_wifi_network {
     char ssid[WIFI_SSID_MAX_LEN];
@@ -803,36 +845,73 @@ static int send_telemetry(
     led_dns_lookup();
     printf("Resolving telemetry server hostname...\n");
 
-    // Resolve the server hostname
-    struct zsock_addrinfo hints = {
-        .ai_family = AF_INET,
-        .ai_socktype = SOCK_STREAM,
-        .ai_protocol = IPPROTO_TLS_1_2,
-    };
+    k_sem_reset(&telemetry_dns_sem);
+    telemetry_dns_address_found = false;
+    telemetry_dns_result = -EHOSTUNREACH;
+    telemetry_server_addr_len = 0;
 
-    struct zsock_addrinfo *res = NULL;
-
-    int ret = zsock_getaddrinfo(
+    int ret = dns_get_addr_info(
         TELEMETRY_HOST,
-        TELEMETRY_PORT,
-        &hints,
-        &res
+        DNS_QUERY_TYPE_A,
+        &telemetry_dns_query_id,
+        telemetry_dns_callback,
+        NULL,
+        CONFIG_NET_SOCKETS_DNS_TIMEOUT
     );
 
-    if (ret != 0 || res == NULL) {
+    if (ret < 0) {
         printf(
-            "ERROR: DNS lookup failed: %d\n",
+            "ERROR: Could not start DNS lookup: %d\n",
             ret
         );
 
         telemetry_failure_code = 6;
 
-        return -EHOSTUNREACH;
+        return ret;
+    }
+
+    ret = k_sem_take(
+        &telemetry_dns_sem,
+        K_MSEC(CONFIG_NET_SOCKETS_DNS_TIMEOUT + 500)
+    );
+
+    if (ret < 0) {
+        int cancel_ret = dns_cancel_addr_info(telemetry_dns_query_id);
+
+        if (cancel_ret < 0) {
+            printf(
+                "DNS query cancellation returned: %d\n",
+                cancel_ret
+            );
+        }
+
+        printf(
+            "ERROR: DNS lookup exceeded %d ms.\n",
+            CONFIG_NET_SOCKETS_DNS_TIMEOUT
+        );
+
+        telemetry_failure_code = 6;
+
+        return -ETIMEDOUT;
+    }
+
+    if (telemetry_dns_result < 0) {
+        printf(
+            "ERROR: DNS lookup failed: %d\n",
+            telemetry_dns_result
+        );
+
+        telemetry_failure_code = 6;
+
+        return telemetry_dns_result;
     }
 
     printf(
         "DNS lookup successful.\n"
     );
+
+    net_sin(&telemetry_server_addr)->sin_port =
+        net_htons(TELEMETRY_PORT_NUMBER);
 
     // Create a TLS 1.2 socket
     int sock = zsock_socket(
@@ -848,8 +927,6 @@ static int send_telemetry(
             "ERROR: Could not create TLS socket: %d\n",
             err
         );
-
-        zsock_freeaddrinfo(res);
 
         telemetry_failure_code = 7;
 
@@ -880,8 +957,6 @@ static int send_telemetry(
         );
 
         zsock_close(sock);
-        zsock_freeaddrinfo(res);
-
         telemetry_failure_code = 7;
 
         return -err;
@@ -905,8 +980,6 @@ static int send_telemetry(
         );
 
         zsock_close(sock);
-        zsock_freeaddrinfo(res);
-
         telemetry_failure_code = 7;
 
         return -err;
@@ -914,18 +987,19 @@ static int send_telemetry(
 
     // Connect to the HTTPS server
     printf(
-        "Connecting to HTTPS server...\n"
+        "Connecting to HTTPS server on port %d...\n",
+        TELEMETRY_PORT_NUMBER
     );
 
     led_https_connecting();
 
     ret = zsock_connect(
         sock,
-        res->ai_addr,
-        res->ai_addrlen
+        &telemetry_server_addr,
+        telemetry_server_addr_len
     );
 
-    zsock_freeaddrinfo(res);
+    led_all_off();
 
     if (ret < 0) {
         int err = errno;
@@ -984,6 +1058,8 @@ static int send_telemetry(
         10000,
         NULL
     );
+
+    led_all_off();
 
     if (ret < 0) {
         printf(

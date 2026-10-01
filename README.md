@@ -38,9 +38,9 @@ the firmware shows a repeating red pulse code before retrying: 1 pulse means
 the access point was not found, 2 means authentication/password failure,
 3 means connection timeout, 4 means another connection-request failure, and
 5 means Wi-Fi connected but DHCP did not complete. After DHCP, solid blue
-means DNS lookup is in progress, purple means HTTPS/TLS connection is in
-progress, and yellow means the HTTP POST is in progress. Green indicates
-telemetry accepted by the server. Red pulse codes 6, 7, and 8 indicate,
+means DNS lookup is in progress, solid purple means the HTTPS/TLS connection
+is in progress, and solid yellow means the HTTP POST is in progress. Green
+indicates telemetry accepted by the server. Red pulse codes 6, 7, and 8 indicate,
 respectively, DNS lookup failure, HTTPS/TLS connection failure, and HTTP POST
 or server-response failure. These codes repeat three times before the next
 telemetry attempt. DNS lookup, TCP connect, and TLS handshake each have a
