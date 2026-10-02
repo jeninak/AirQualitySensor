@@ -934,7 +934,8 @@ static int send_telemetry(
     }
 
     printf(
-        "TLS socket created.\n"
+        "TLS socket created. Connecting to HTTPS server on port %d...\n",
+        TELEMETRY_PORT_NUMBER
     );
 
     // Disable certificate verification for the first connection test
@@ -986,11 +987,6 @@ static int send_telemetry(
     }
 
     // Connect to the HTTPS server
-    printf(
-        "Connecting to HTTPS server on port %d...\n",
-        TELEMETRY_PORT_NUMBER
-    );
-
     led_https_connecting();
 
     ret = zsock_connect(
@@ -1003,15 +999,32 @@ static int send_telemetry(
 
     if (ret < 0) {
         int err = errno;
+        int socket_error = 0;
+        net_socklen_t socket_error_len = sizeof(socket_error);
 
         printf(
             "ERROR: HTTPS connection failed: %d\n",
             err
         );
 
+        int getsockopt_ret = zsock_getsockopt(
+            sock,
+            ZSOCK_SOL_SOCKET,
+            ZSOCK_SO_ERROR,
+            &socket_error,
+            &socket_error_len
+        );
+
+        if (getsockopt_ret == 0) {
+            printf("TLS socket internal error: %d\n", socket_error);
+        } else {
+            printf("Could not read TLS socket error: %d\n", errno);
+        }
+
         zsock_close(sock);
 
-        telemetry_failure_code = 7;
+        telemetry_failure_code =
+            (err == ENOENT && socket_error == 0) ? 9 : 7;
 
         return -err;
     }
