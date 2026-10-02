@@ -3,6 +3,11 @@
 Thingy:53 firmware using the nRF7002EB Wi-Fi expansion board to send BME688
 measurements to the PHP telemetry endpoint and display them on the dashboard.
 
+The firmware is divided by responsibility: `src/wifi.c` handles Wi-Fi setup
+and reconnection, `src/sensor.c` reads and formats BME688 measurements,
+`src/telemetry.c` posts readings over HTTPS, and `src/led.c` controls the
+Thingy:53 status LED. `src/main.c` coordinates these modules.
+
 ## Configure Wi-Fi
 
 The nRF7002EB connects to 2.4 GHz Wi-Fi networks. Copy

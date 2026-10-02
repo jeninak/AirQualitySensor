@@ -3,4 +3,10 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(Nordic)
 
-target_sources(app PRIVATE src/main.c)
+target_sources(app PRIVATE
+  src/main.c
+  src/led.c
+  src/wifi.c
+  src/sensor.c
+  src/telemetry.c
+)
