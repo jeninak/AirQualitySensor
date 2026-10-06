@@ -1,4 +1,4 @@
-# AirQualitySensor
+# Home Environment Monitoring System with Nordic Thingy:53
 
 Thingy:53 firmware using the nRF7002EB Wi-Fi expansion board to send BME688
 measurements to the PHP telemetry endpoint and display them on the dashboard.
@@ -26,11 +26,11 @@ Copy-Item src/wifi_config.h.example src/wifi_config.h
 This application uses Wi-Fi on the application core and does not use the
 nRF5340 network core, so sysbuild leaves that image out. From an nRF Connect
 SDK terminal, build for Thingy:53 with the `nrf7002eb` shield, then flash the
-board using the normal west commands for that target:
+board using the normal west and nrfutil commands for that target:
 
 ```powershell
 west build -b thingy53/nrf5340/cpuapp --shield nrf7002eb -p always
-west flash
+nrfutil device program --firmware "yourFilePathForBuildFolder\build\dfu_application.zip" --serial-number nordic-thingy-device-number
 ```
 
 Connect to the board's serial console to see Wi-Fi association, DHCP, sensor
