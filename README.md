@@ -32,6 +32,7 @@ board using the normal west and nrfutil commands for that target:
 west build -b thingy53/nrf5340/cpuapp --shield nrf7002eb -p always
 nrfutil device program --firmware "yourFilePathForBuildFolder\build\dfu_application.zip" --serial-number nordic-thingy-device-number
 ```
+![nordic](https://github.com/jeninak/AirQualitySensor/blob/main/assets/nordic.jpg?raw=true)
 
 Connect to the board's serial console to see Wi-Fi association, DHCP, sensor
 sampling, and HTTP response status messages. The RGB LED shows connection,
@@ -53,3 +54,7 @@ three times before the next
 telemetry attempt. DNS lookup, TCP connect, and TLS handshake each have a
 finite timeout, so a failure should return to the retry loop rather than
 leaving the firmware stuck indefinitely.
+
+## Dashboard
+
+![dashboard](https://github.com/jeninak/AirQualitySensor/blob/main/assets/dashboard.png?raw=true)
